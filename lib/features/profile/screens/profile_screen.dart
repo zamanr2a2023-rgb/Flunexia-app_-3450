@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flunexia_app/features/auth/screens/login_screen.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
@@ -18,20 +19,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _nameController = TextEditingController(text: 'Marc Dupont');
   final _emailController =
       TextEditingController(text: 'm.dupont@flunexia.app');
+  final _otherOrgTypeController = TextEditingController();
 
   int _navIndex = 4;
   int _orgType = 0;
+
+  static const _otherOrgTypeIndex = 5;
 
   static const _orgTypes = [
     (icon: Icons.account_balance_outlined, label: 'Municipality'),
     (icon: Icons.groups_outlined, label: 'Association'),
     (icon: Icons.school_outlined, label: 'School'),
+    (icon: Icons.business_outlined, label: 'Company'),
+    (icon: Icons.person_outline, label: 'Individual'),
+    (icon: Icons.more_horiz, label: 'Other'),
   ];
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
+    _otherOrgTypeController.dispose();
     super.dispose();
   }
 
@@ -63,6 +71,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
       ),
+    );
+  }
+
+  void _deleteAccount() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
     );
   }
 
@@ -122,6 +137,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       );
                     }),
+                    if (_orgType == _otherOrgTypeIndex) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Specify organization type',
+                          style: _ProfDesign.fieldLabel,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _ProfileTextField(
+                        controller: _otherOrgTypeController,
+                        hintText: 'Enter your organization type',
+                      ),
+                    ],
                     const SizedBox(height: 28),
                     SizedBox(
                       width: double.infinity,
@@ -143,7 +173,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () {},
+                      onPressed: _deleteAccount,
                       child: Text(
                         'Delete Account',
                         style: _ProfDesign.deleteLabel,
@@ -359,10 +389,12 @@ class _ProfileTextField extends StatelessWidget {
   const _ProfileTextField({
     required this.controller,
     this.keyboardType,
+    this.hintText,
   });
 
   final TextEditingController controller;
   final TextInputType? keyboardType;
+  final String? hintText;
 
   @override
   Widget build(BuildContext context) {
@@ -372,6 +404,10 @@ class _ProfileTextField extends StatelessWidget {
       style: _ProfDesign.inputText,
       cursorColor: _ProfDesign.primary,
       decoration: InputDecoration(
+        hintText: hintText,
+        hintStyle: _ProfDesign.inputText.copyWith(
+          color: _ProfDesign.textGrey.withValues(alpha: 0.7),
+        ),
         filled: true,
         fillColor: _ProfDesign.card,
         contentPadding:

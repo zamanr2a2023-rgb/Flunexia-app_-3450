@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flunexia_app/features/auth/screens/login_screen.dart';
+import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
+import 'package:flunexia_app/features/provider_dashbord/screens/provider_dashbord_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -33,6 +35,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _goToLogin() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
+  }
+
+  void _handleSignUp() {
+    final Widget destination = _accountType == 0
+        ? const OrganizerDashboard()
+        : const ProviderDashboardScreen();
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => destination),
     );
   }
 
@@ -152,7 +164,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: () {},
+                        onPressed: _handleSignUp,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _RegDesign.primary,
                           foregroundColor: Colors.white,
@@ -196,7 +208,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 class _RegDesign {
   _RegDesign._();
 
-  static const Color background = Color(0xFFF8F9FB);
+  static const Color background = Color(0xFFF8F9FE);
   static const Color primary = Color(0xFF0052CC);
   static const Color providerGreen = Color(0xFF12B76A);
   static const Color textDark = Color(0xFF1A1C1E);

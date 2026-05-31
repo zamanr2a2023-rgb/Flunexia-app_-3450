@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flunexia_app/features/auth/screens/register_screen.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
+import 'package:flunexia_app/features/provider_dashbord/screens/provider_dashbord_screen.dart';
+
+enum _LoginAccountType { organizer, provider }
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,6 +19,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  _LoginAccountType _accountType = _LoginAccountType.organizer;
 
   @override
   void dispose() {
@@ -25,8 +29,12 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleLogin(BuildContext context) {
+    final Widget destination = _accountType == _LoginAccountType.provider
+        ? const ProviderDashboardScreen()
+        : const OrganizerDashboard();
+
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const OrganizerDashboard()),
+      MaterialPageRoute(builder: (_) => destination),
     );
   }
 
@@ -56,6 +64,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       _LoginCard(
                         emailController: _emailController,
                         passwordController: _passwordController,
+                        accountType: _accountType,
+                        onAccountTypeChanged: (type) =>
+                            setState(() => _accountType = type),
                         onLogin: () => _handleLogin(context),
                         onSignUpTap: _goToRegister,
                       ),
@@ -80,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
 class _LoginDesign {
   _LoginDesign._();
 
-  static const Color background = Color(0xFFF8F9FB);
+  static const Color background = Color(0xFFF8F9FE);
   static const Color primary = Color(0xFF0052CC);
   static const Color textDark = Color(0xFF1A1C1E);
   static const Color textGrey = Color(0xFF667085);
@@ -208,12 +219,16 @@ class _LoginCard extends StatefulWidget {
   const _LoginCard({
     required this.emailController,
     required this.passwordController,
+    required this.accountType,
+    required this.onAccountTypeChanged,
     required this.onLogin,
     required this.onSignUpTap,
   });
 
   final TextEditingController emailController;
   final TextEditingController passwordController;
+  final _LoginAccountType accountType;
+  final ValueChanged<_LoginAccountType> onAccountTypeChanged;
   final VoidCallback onLogin;
   final VoidCallback onSignUpTap;
 
@@ -257,7 +272,12 @@ class _LoginCardState extends State<_LoginCard> {
             'Access your space to organize outings or respond to requests.',
             style: _LoginDesign.subtitle(_LoginDesign.textGrey),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 20),
+          _AccountTypeToggle(
+            accountType: widget.accountType,
+            onChanged: widget.onAccountTypeChanged,
+          ),
+          const SizedBox(height: 24),
           Text('Email address',
               style: _LoginDesign.fieldLabel(_LoginDesign.textGrey)),
           const SizedBox(height: 8),
@@ -300,6 +320,80 @@ class _LoginCardState extends State<_LoginCard> {
           const SizedBox(height: 28),
           _LoginButton(onPressed: widget.onLogin),
         ],
+      ),
+    );
+  }
+}
+
+class _AccountTypeToggle extends StatelessWidget {
+  const _AccountTypeToggle({
+    required this.accountType,
+    required this.onChanged,
+  });
+
+  final _LoginAccountType accountType;
+  final ValueChanged<_LoginAccountType> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: _LoginDesign.tabInactiveBg,
+        borderRadius: BorderRadius.circular(_LoginDesign.tabRadius),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _AccountTypeOption(
+              label: 'Organizer',
+              selected: accountType == _LoginAccountType.organizer,
+              onTap: () => onChanged(_LoginAccountType.organizer),
+            ),
+          ),
+          Expanded(
+            child: _AccountTypeOption(
+              label: 'Provider',
+              selected: accountType == _LoginAccountType.provider,
+              onTap: () => onChanged(_LoginAccountType.provider),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountTypeOption extends StatelessWidget {
+  const _AccountTypeOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? _LoginDesign.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(_LoginDesign.tabRadius),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: _LoginDesign.tabLabel(
+            selected ? Colors.white : _LoginDesign.textGrey,
+            active: selected,
+          ),
+        ),
       ),
     );
   }
