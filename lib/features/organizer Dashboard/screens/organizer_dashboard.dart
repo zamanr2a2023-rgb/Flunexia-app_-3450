@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flunexia_app/features/organizer Dashboard/data/analytics_repository.dart';
+import 'package:flunexia_app/features/organizer Dashboard/data/models/dashboard_model.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
 import 'package:flunexia_app/features/requests/screens/requests_screen.dart';
@@ -13,7 +15,90 @@ class OrganizerDashboard extends StatefulWidget {
 }
 
 class _OrganizerDashboardState extends State<OrganizerDashboard> {
+  final _analyticsRepository = AnalyticsRepository();
   int _navIndex = 0;
+  bool _isLoading = true;
+  DashboardStatsModel _stats = const DashboardStatsModel(
+    trips: 0,
+    pendingRequests: 0,
+    acceptedOffers: 0,
+    completedBookings: 0,
+  );
+  List<_TripItem> _recentTrips = const [];
+  int _unreadCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final dashboard = await _analyticsRepository.fetchMobileDashboard();
+      if (!mounted) return;
+
+      setState(() {
+        _stats = dashboard.stats;
+        _unreadCount = dashboard.unreadCount;
+        _recentTrips = dashboard.recentTrips.map(_mapTrip).toList();
+      });
+    } on DashboardException catch (error) {
+      if (!mounted) return;
+      _showMessage(context, error.message);
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(context, 'Failed to load dashboard. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  _TripItem _mapTrip(DashboardTripModel trip) {
+    return _TripItem(
+      title: trip.title,
+      date: _formatDate(trip.startDate),
+      category: trip.location.isNotEmpty
+          ? trip.location
+          : (trip.needTypes.isNotEmpty ? trip.needTypes.first : 'Trip'),
+      status: _mapTripStatus(trip.status),
+      imageUrl: trip.image ??
+          'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&q=80',
+    );
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null || isoDate.isEmpty) return '';
+    try {
+      final date = DateTime.parse(isoDate);
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (_) {
+      return isoDate;
+    }
+  }
+
+  _TripStatus _mapTripStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return _TripStatus.pending;
+      case 'completed':
+        return _TripStatus.completed;
+      default:
+        return _TripStatus.active;
+    }
+  }
 
   void _onNavSelected(int index) {
     if (index == _navIndex) return;
@@ -46,33 +131,6 @@ class _OrganizerDashboardState extends State<OrganizerDashboard> {
     );
   }
 
-  static const _recentTrips = [
-    _TripItem(
-      title: 'Weekend at Amalfi Coast',
-      date: 'Oct 12, 2023',
-      category: 'Coastal Tour',
-      status: _TripStatus.active,
-      imageUrl:
-          'https://images.unsplash.com/photo-1533619043935-4ff1dd2f2b2f6?w=800&q=80',
-    ),
-    _TripItem(
-      title: 'Alpine Ski Retreat',
-      date: 'Dec 05, 2023',
-      category: 'Adventure',
-      status: _TripStatus.pending,
-      imageUrl:
-          'https://images.unsplash.com/photo-1551524164-687a55dd1126?w=800&q=80',
-    ),
-    _TripItem(
-      title: 'Paris City Break',
-      date: 'Aug 20, 2023',
-      category: 'City Tour',
-      status: _TripStatus.completed,
-      imageUrl:
-          'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=800&q=80',
-    ),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -83,38 +141,50 @@ class _OrganizerDashboardState extends State<OrganizerDashboard> {
           children: [
             const _DashboardTopBar(),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Hello, Organizer.', style: _DashboardDesign.greeting),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Manage your group outings in one place.',
-                      style: _DashboardDesign.greetingSubtitle,
-                    ),
-                    const SizedBox(height: 24),
-                    const _StatsGrid(),
-                    const SizedBox(height: 20),
-                    const _CreateTripButton(),
-                    const SizedBox(height: 28),
-                    const _RecentTripsHeader(),
-                    const SizedBox(height: 16),
-                    ..._recentTrips.map(
-                      (trip) => Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: _TripCard(trip: trip),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Hello, Organizer.',
+                              style: _DashboardDesign.greeting),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Manage your group outings in one place.',
+                            style: _DashboardDesign.greetingSubtitle,
+                          ),
+                          const SizedBox(height: 24),
+                          _StatsGrid(stats: _stats),
+                          const SizedBox(height: 20),
+                          _CreateTripButton(
+                            onPressed: () => _replaceWith(const CreateTripScreen()),
+                          ),
+                          const SizedBox(height: 28),
+                          const _RecentTripsHeader(),
+                          const SizedBox(height: 16),
+                          if (_recentTrips.isEmpty)
+                            Text(
+                              'No recent trips yet.',
+                              style: _DashboardDesign.tripMeta,
+                            )
+                          else
+                            ..._recentTrips.map(
+                              (trip) => Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: _TripCard(trip: trip),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
             ),
             _DashboardBottomNav(
               selectedIndex: _navIndex,
               onSelected: _onNavSelected,
+              showRequestsDot: _unreadCount > 0,
             ),
           ],
         ),
@@ -280,7 +350,11 @@ class _DashboardTopBar extends StatelessWidget {
 }
 
 class _StatsGrid extends StatelessWidget {
-  const _StatsGrid();
+  const _StatsGrid({required this.stats});
+
+  final DashboardStatsModel stats;
+
+  String _formatCount(int value) => value.toString().padLeft(2, '0');
 
   @override
   Widget build(BuildContext context) {
@@ -291,21 +365,25 @@ class _StatsGrid extends StatelessWidget {
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
       childAspectRatio: 1.35,
-      children: const [
-        _StatCard(label: 'CREATED TRIPS', value: '12', valueColor: _DashboardDesign.primary),
+      children: [
+        _StatCard(
+          label: 'CREATED TRIPS',
+          value: stats.trips.toString(),
+          valueColor: _DashboardDesign.primary,
+        ),
         _StatCard(
           label: 'PENDING REQUESTS',
-          value: '08',
+          value: _formatCount(stats.pendingRequests),
           valueColor: _DashboardDesign.statOrange,
         ),
         _StatCard(
           label: 'ACCEPTED OFFERS',
-          value: '24',
+          value: _formatCount(stats.acceptedOffers),
           valueColor: _DashboardDesign.statGreen,
         ),
         _StatCard(
           label: 'COMPLETED BOOKINGS',
-          value: '156',
+          value: stats.completedBookings.toString(),
           valueColor: _DashboardDesign.textDark,
         ),
       ],
@@ -347,7 +425,9 @@ class _StatCard extends StatelessWidget {
 }
 
 class _CreateTripButton extends StatelessWidget {
-  const _CreateTripButton();
+  const _CreateTripButton({required this.onPressed});
+
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -355,7 +435,7 @@ class _CreateTripButton extends StatelessWidget {
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: () {},
+        onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: _DashboardDesign.primary,
           foregroundColor: Colors.white,
@@ -542,28 +622,28 @@ class _NavBarItem {
   const _NavBarItem({
     required this.icon,
     required this.label,
-    this.showDot = false,
   });
 
   final IconData icon;
   final String label;
-  final bool showDot;
 }
 
 class _DashboardBottomNav extends StatelessWidget {
   const _DashboardBottomNav({
     required this.selectedIndex,
     required this.onSelected,
+    required this.showRequestsDot,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  final bool showRequestsDot;
 
   static const _items = <_NavBarItem>[
     _NavBarItem(icon: Icons.grid_view_rounded, label: 'Dashboard'),
     _NavBarItem(icon: Icons.add_circle_outline, label: 'Create'),
     _NavBarItem(icon: Icons.calendar_month_outlined, label: 'Trips'),
-    _NavBarItem(icon: Icons.mail_outline, label: 'Requests', showDot: true),
+    _NavBarItem(icon: Icons.mail_outline, label: 'Requests'),
     _NavBarItem(icon: Icons.person_outline, label: 'Profile'),
   ];
 
@@ -602,7 +682,7 @@ class _DashboardBottomNav extends StatelessWidget {
                       _NavIcon(
                         icon: item.icon,
                         active: active,
-                        showDot: item.showDot,
+                        showDot: item.label == 'Requests' && showRequestsDot,
                       ),
                       const SizedBox(height: 4),
                       Text(

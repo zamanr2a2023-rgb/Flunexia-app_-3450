@@ -1,6 +1,8 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flunexia_app/features/auth/data/auth_repository.dart';
+import 'package:flunexia_app/features/auth/logic/auth_validator.dart';
 import 'package:flunexia_app/features/auth/screens/register_screen.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/provider_dashbord/screens/provider_dashbord_screen.dart';
@@ -19,7 +21,9 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authRepository = AuthRepository();
   _LoginAccountType _accountType = _LoginAccountType.organizer;
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -28,13 +32,65 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _handleLogin(BuildContext context) {
-    final Widget destination = _accountType == _LoginAccountType.provider
-        ? const ProviderDashboardScreen()
-        : const OrganizerDashboard();
+  Future<void> _handleLogin(BuildContext context) async {
+    if (_isLoading) return;
 
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => destination),
+    final validationError = AuthValidator.validateLogin(
+      email: _emailController.text,
+      password: _passwordController.text,
+    );
+    if (validationError != null) {
+      _showMessage(context, validationError);
+      return;
+    }
+
+    final expectedRole = _accountType == _LoginAccountType.organizer
+        ? 'organizer'
+        : 'provider';
+
+    setState(() => _isLoading = true);
+
+    try {
+      final response = await _authRepository.login(
+        email: _emailController.text,
+        password: _passwordController.text,
+      );
+
+      if (!context.mounted) return;
+
+      if (response.user.role != expectedRole) {
+        await _authRepository.clearSession();
+        if (!context.mounted) return;
+        _showMessage(
+          context,
+          expectedRole == 'organizer'
+              ? 'This account is not an organizer account.'
+              : 'This account is not a provider account.',
+        );
+        return;
+      }
+
+      final destination = expectedRole == 'organizer'
+          ? const OrganizerDashboard()
+          : const ProviderDashboardScreen();
+
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => destination),
+      );
+    } on AuthException catch (error) {
+      if (!context.mounted) return;
+      _showMessage(context, error.message);
+    } catch (_) {
+      if (!context.mounted) return;
+      _showMessage(context, 'Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -69,6 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             setState(() => _accountType = type),
                         onLogin: () => _handleLogin(context),
                         onSignUpTap: _goToRegister,
+                        isLoading: _isLoading,
                       ),
                       const Spacer(),
                       const _SecureConnectionFooter(),
@@ -223,6 +280,7 @@ class _LoginCard extends StatefulWidget {
     required this.onAccountTypeChanged,
     required this.onLogin,
     required this.onSignUpTap,
+    required this.isLoading,
   });
 
   final TextEditingController emailController;
@@ -231,6 +289,7 @@ class _LoginCard extends StatefulWidget {
   final ValueChanged<_LoginAccountType> onAccountTypeChanged;
   final VoidCallback onLogin;
   final VoidCallback onSignUpTap;
+  final bool isLoading;
 
   @override
   State<_LoginCard> createState() => _LoginCardState();
@@ -318,7 +377,7 @@ class _LoginCardState extends State<_LoginCard> {
             ),
           ),
           const SizedBox(height: 28),
-          _LoginButton(onPressed: widget.onLogin),
+          _LoginButton(onPressed: widget.onLogin, isLoading: widget.isLoading),
         ],
       ),
     );
@@ -497,9 +556,13 @@ class _LoginTextField extends StatelessWidget {
 }
 
 class _LoginButton extends StatelessWidget {
-  const _LoginButton({required this.onPressed});
+  const _LoginButton({
+    required this.onPressed,
+    required this.isLoading,
+  });
 
   final VoidCallback onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -507,10 +570,13 @@ class _LoginButton extends StatelessWidget {
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: onPressed,
+        onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: _LoginDesign.primary,
           foregroundColor: Colors.white,
+          disabledBackgroundColor:
+              _LoginDesign.primary.withValues(alpha: 0.7),
+          disabledForegroundColor: Colors.white,
           elevation: 0,
           shadowColor: Colors.transparent,
           shape: RoundedRectangleBorder(
@@ -518,15 +584,25 @@ class _LoginButton extends StatelessWidget {
           ),
           padding: const EdgeInsets.symmetric(horizontal: 20),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Log In', style: _LoginDesign.buttonLabel(Colors.white)),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_forward, size: 20, color: Colors.white),
-          ],
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Log In', style: _LoginDesign.buttonLabel(Colors.white)),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.arrow_forward,
+                      size: 20, color: Colors.white),
+                ],
+              ),
       ),
     );
   }

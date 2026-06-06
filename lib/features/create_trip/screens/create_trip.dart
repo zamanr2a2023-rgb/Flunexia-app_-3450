@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flunexia_app/features/create_trip/data/trip_repository.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
 import 'package:flunexia_app/features/requests/screens/requests_screen.dart';
@@ -16,6 +18,8 @@ class CreateTripScreen extends StatefulWidget {
 }
 
 class _CreateTripScreenState extends State<CreateTripScreen> {
+  final _tripRepository = TripRepository();
+  final _imagePicker = ImagePicker();
   final _budgetController = TextEditingController();
   final _titleController = TextEditingController();
   final _dateController = TextEditingController();
@@ -24,6 +28,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   final _descriptionController = TextEditingController();
 
   String _needType = 'Transport';
+  Uint8List? _coverImageBytes;
+  String? _coverImageName;
+  bool _isSubmitting = false;
   static const List<String> _needTypeOptions = [
     'Transport',
     'Accommodation',
@@ -62,6 +69,104 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
       ),
+    );
+  }
+
+  Future<void> _pickCoverImage() async {
+    try {
+      final image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+
+      setState(() {
+        _coverImageBytes = bytes;
+        _coverImageName = image.name.isNotEmpty ? image.name : 'cover.jpg';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Could not select image. Please try again.');
+    }
+  }
+
+  String? _validateForm() {
+    if (_titleController.text.trim().isEmpty) {
+      return 'Trip title is required.';
+    }
+    if (_dateController.text.trim().isEmpty) {
+      return 'Departure date is required.';
+    }
+    if (_locationController.text.trim().isEmpty) {
+      return 'Location is required.';
+    }
+    if (_participantsController.text.trim().isEmpty) {
+      return 'Number of participants is required.';
+    }
+    if (_descriptionController.text.trim().isEmpty) {
+      return 'Description is required.';
+    }
+    return null;
+  }
+
+  String _formatDateForApi(String value) {
+    final parts = value.split('-');
+    if (parts.length == 3) {
+      return '${parts[2]}-${parts[1]}-${parts[0]}';
+    }
+    return value;
+  }
+
+  Future<void> _publishTrip() async {
+    if (_isSubmitting) return;
+
+    final validationError = _validateForm();
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final response = await _tripRepository.createTrip(
+        CreateTripRequest(
+          title: _titleController.text,
+          description: _descriptionController.text,
+          location: _locationController.text,
+          startDate: _formatDateForApi(_dateController.text),
+          participants: _participantsController.text,
+          needTypes: [_needType],
+          status: 'published',
+          budgetEstimate: _budgetController.text.trim().isEmpty
+              ? null
+              : _budgetController.text.trim(),
+          imageBytes: _coverImageBytes,
+          imageName: _coverImageName,
+        ),
+      );
+
+      if (!mounted) return;
+
+      _showMessage('Trip "${response.trip.title}" published successfully.');
+      _replaceWith(const MyTripsScreen());
+    } on TripException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Failed to create trip. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -118,7 +223,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     const SizedBox(height: 20),
                     _FieldCard(
                       label: 'Cover Image',
-                      child: _CoverImagePicker(onTap: () {}),
+                      child: _CoverImagePicker(
+                        imageBytes: _coverImageBytes,
+                        onTap: _pickCoverImage,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     _FieldCard(
@@ -197,7 +305,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const _PublishRequestButton(),
+                    _PublishRequestButton(
+                      isLoading: _isSubmitting,
+                      onPressed: _publishTrip,
+                    ),
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -618,38 +729,54 @@ class _CTTextField extends StatelessWidget {
 }
 
 class _CoverImagePicker extends StatelessWidget {
-  const _CoverImagePicker({required this.onTap});
+  const _CoverImagePicker({
+    required this.onTap,
+    this.imageBytes,
+  });
 
   final VoidCallback onTap;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: DottedBorderBox(
         child: Container(
+          width: double.infinity,
           height: 100,
           alignment: Alignment.center,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: _CTDesign.background,
-                  borderRadius: BorderRadius.circular(8),
+          child: imageBytes != null
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(_CTDesign.inputRadius),
+                  child: Image.memory(
+                    imageBytes!,
+                    width: double.infinity,
+                    height: 100,
+                    fit: BoxFit.cover,
+                  ),
+                )
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _CTDesign.background,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.image_outlined,
+                        size: 24,
+                        color: _CTDesign.textGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Add a cover photo', style: _CTDesign.coverHint),
+                  ],
                 ),
-                child: const Icon(
-                  Icons.image_outlined,
-                  size: 24,
-                  color: _CTDesign.textGrey,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text('Add a cover photo', style: _CTDesign.coverHint),
-            ],
-          ),
         ),
       ),
     );
@@ -763,7 +890,13 @@ class _NeedTypeDropdown extends StatelessWidget {
 }
 
 class _PublishRequestButton extends StatelessWidget {
-  const _PublishRequestButton();
+  const _PublishRequestButton({
+    required this.onPressed,
+    required this.isLoading,
+  });
+
+  final VoidCallback onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -771,24 +904,35 @@ class _PublishRequestButton extends StatelessWidget {
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: () {},
+        onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: _CTDesign.primary,
           foregroundColor: Colors.white,
+          disabledBackgroundColor: _CTDesign.primary.withValues(alpha: 0.7),
+          disabledForegroundColor: Colors.white,
           elevation: 0,
           shadowColor: Colors.transparent,
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 24),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.send_rounded, size: 18, color: Colors.white),
-            const SizedBox(width: 10),
-            Text('Publish Request', style: _CTDesign.publishLabel),
-          ],
-        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.send_rounded, size: 18, color: Colors.white),
+                  const SizedBox(width: 10),
+                  Text('Publish Request', style: _CTDesign.publishLabel),
+                ],
+              ),
       ),
     );
   }
