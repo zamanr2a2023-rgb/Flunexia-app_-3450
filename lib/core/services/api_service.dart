@@ -41,6 +41,24 @@ class ApiService {
     );
   }
 
+  Future<http.Response> patch(
+    String endpoint, {
+    Map<String, dynamic>? body,
+    String? token,
+  }) {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
+
+    return _client.patch(
+      Uri.parse('${ApiConstants.baseUrl}$endpoint'),
+      headers: headers,
+      body: body == null ? null : jsonEncode(body),
+    );
+  }
+
   Future<http.Response> postMultipart(
     String endpoint, {
     required Map<String, String> fields,

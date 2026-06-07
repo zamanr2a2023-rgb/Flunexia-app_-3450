@@ -4,6 +4,7 @@ import 'package:flunexia_app/features/organizer Dashboard/data/analytics_reposit
 import 'package:flunexia_app/features/organizer Dashboard/data/models/dashboard_model.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
+import 'package:flunexia_app/features/create_trip/trips_details/trips_details.dart';
 import 'package:flunexia_app/features/requests/screens/requests_screen.dart';
 import 'package:flunexia_app/features/profile/screens/profile_screen.dart';
 
@@ -64,6 +65,7 @@ class _OrganizerDashboardState extends State<OrganizerDashboard> {
 
   _TripItem _mapTrip(DashboardTripModel trip) {
     return _TripItem(
+      id: trip.id,
       title: trip.title,
       date: _formatDate(trip.startDate),
       category: trip.location.isNotEmpty
@@ -487,6 +489,7 @@ enum _TripStatus { active, pending, completed }
 
 class _TripItem {
   const _TripItem({
+    required this.id,
     required this.title,
     required this.date,
     required this.category,
@@ -494,6 +497,7 @@ class _TripItem {
     required this.imageUrl,
   });
 
+  final String id;
   final String title;
   final String date;
   final String category;
@@ -563,7 +567,14 @@ class _TripCard extends StatelessWidget {
                 const Divider(height: 1, color: _DashboardDesign.border),
                 const SizedBox(height: 10),
                 GestureDetector(
-                  onTap: () {},
+                  onTap: () {
+                    if (trip.id.isEmpty) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => TripDetailsScreen(tripId: trip.id),
+                      ),
+                    );
+                  },
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [

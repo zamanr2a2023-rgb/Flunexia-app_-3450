@@ -55,6 +55,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
 
   static const _trips = [
     _TripItem(
+      id: '6a22a36b4bd066564366e75b',
       title: 'Sunset Ridge Trail',
       category: 'Hiking',
       price: '\$15 entry',
@@ -69,6 +70,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           'https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&q=80',
     ),
     _TripItem(
+      id: '6a24addece3e45256bc19814',
       title: 'Weekly Supper Club',
       category: 'Social',
       price: 'No Fee',
@@ -83,6 +85,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&q=80',
     ),
     _TripItem(
+      id: '6a24addece3e45256bc19815',
       title: 'UI Design Sync',
       category: 'Workshop',
       price: 'Free',
@@ -429,6 +432,7 @@ enum _TripAction { viewDetails, viewRecap }
 
 class _TripItem {
   const _TripItem({
+    required this.id,
     required this.title,
     required this.category,
     required this.price,
@@ -442,6 +446,7 @@ class _TripItem {
     required this.imageUrl,
   });
 
+  final String id;
   final String title;
   final String category;
   final String price;
@@ -545,7 +550,7 @@ class _TripCard extends StatelessWidget {
             onPressed: trip.action == _TripAction.viewDetails
                 ? () => Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => const TripDetailsScreen(),
+                        builder: (_) => TripDetailsScreen(tripId: trip.id),
                       ),
                     )
                 : () {},

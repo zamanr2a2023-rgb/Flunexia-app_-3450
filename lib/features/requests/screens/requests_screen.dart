@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flunexia_app/features/create_trip/data/offer_repository.dart';
+import 'package:flunexia_app/features/create_trip/data/trip_repository.dart';
+import 'package:flunexia_app/features/requests/data/models/request_model.dart';
+import 'package:flunexia_app/features/requests/data/request_repository.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
@@ -15,8 +19,13 @@ class RequestsScreen extends StatefulWidget {
 }
 
 class _RequestsScreenState extends State<RequestsScreen> {
+  final _requestRepository = RequestRepository();
+  final _offerRepository = OfferRepository();
   int _navIndex = 3;
   int _activeFilter = 0;
+  bool _isLoading = true;
+  List<_RequestItem> _requests = const [];
+  final Set<String> _updatingOfferIds = {};
 
   static const _filters = [
     'All',
@@ -26,46 +35,190 @@ class _RequestsScreenState extends State<RequestsScreen> {
     'Completed',
   ];
 
-  static const _requests = [
-    _RequestItem(
-      title: 'Amalfi Coast Summer Escape',
-      status: _RequestStatus.pending,
-      provider: 'Luxury Linens Ltd.',
-      type: 'Catering',
-      serviceDate: 'August 12, 2024',
+  @override
+  void initState() {
+    super.initState();
+    _loadRequests();
+  }
+
+  String? _statusForFilter(int index) {
+    return switch (index) {
+      1 => 'pending',
+      2 => 'accepted',
+      3 => 'rejected',
+      4 => 'completed',
+      _ => null,
+    };
+  }
+
+  Future<void> _loadRequests() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final apiRequests = await _requestRepository.fetchRequests(
+        status: _statusForFilter(_activeFilter),
+      );
+      final items = <_RequestItem>[];
+      for (final request in apiRequests) {
+        items.add(await _mapRequest(request));
+      }
+      if (!mounted) return;
+      setState(() {
+        _requests = items;
+        _isLoading = false;
+      });
+    } on TripException catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showMessage('Failed to load requests. Please try again.');
+    }
+  }
+
+  Future<_RequestItem> _mapRequest(BookingRequestModel request) async {
+    var providerName = request.provider?.name ?? '—';
+    String? offerId;
+
+    if (request.status.toLowerCase() == 'pending') {
+      final offers = await _offerRepository.fetchOffersForRequest(request.id);
+      final pendingOffers = offers.where((offer) => offer.isPending).toList();
+      final selected = pendingOffers.isNotEmpty
+          ? pendingOffers.first
+          : (offers.isNotEmpty ? offers.first : null);
+      if (selected != null) {
+        offerId = selected.id;
+        providerName = selected.provider.name;
+      }
+    } else if (request.provider != null && request.provider!.name.isNotEmpty) {
+      providerName = request.provider!.name;
+    }
+
+    final needType = request.needType.isNotEmpty ? request.needType : 'Service';
+    String? errorMessage;
+    if (request.status.toLowerCase() == 'rejected') {
+      errorMessage = request.acceptedOffer?.rejectionReason ??
+          'This request was rejected.';
+    }
+
+    return _RequestItem(
+      requestId: request.id,
+      offerId: offerId,
+      title: request.trip?.title ?? 'Trip request',
+      status: _mapStatus(request.status),
+      provider: providerName,
+      type: needType,
+      serviceDate: _formatDate(request.trip?.startDate),
       providerIcon: Icons.person_outline,
-      typeIcon: Icons.restaurant_outlined,
-    ),
-    _RequestItem(
-      title: 'Swiss Alps Hiking Retreat',
-      status: _RequestStatus.accepted,
-      provider: 'Peak Guides Co.',
-      type: 'Adventure',
-      serviceDate: 'Sept 05, 2024',
-      providerIcon: Icons.hiking_outlined,
-      typeIcon: Icons.terrain_outlined,
-    ),
-    _RequestItem(
-      title: 'Kyoto Cherry Blossom Tour',
-      status: _RequestStatus.completed,
-      provider: 'Nippon Travel Experts',
-      type: 'City Tour',
-      serviceDate: 'April 14, 2024',
-      providerIcon: Icons.person_outline,
-      typeIcon: Icons.location_city_outlined,
-    ),
-    _RequestItem(
-      title: 'Berlin Underground Art Trip',
-      status: _RequestStatus.rejected,
-      provider: 'Urban Art Tours',
-      type: 'Culture',
-      serviceDate: 'June 20, 2024',
-      providerIcon: Icons.person_outline,
-      typeIcon: Icons.palette_outlined,
-      errorMessage:
-          'Service unavailable for selected dates. Tap to refresh.',
-    ),
-  ];
+      typeIcon: _iconForNeedType(needType),
+      errorMessage: errorMessage,
+    );
+  }
+
+  _RequestStatus _mapStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return _RequestStatus.pending;
+      case 'accepted':
+        return _RequestStatus.accepted;
+      case 'completed':
+        return _RequestStatus.completed;
+      case 'rejected':
+        return _RequestStatus.rejected;
+      default:
+        return _RequestStatus.pending;
+    }
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null || isoDate.isEmpty) return '—';
+    try {
+      final date = DateTime.parse(isoDate);
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (_) {
+      return isoDate;
+    }
+  }
+
+  IconData _iconForNeedType(String type) {
+    switch (type.toLowerCase()) {
+      case 'transport':
+        return Icons.directions_bus_outlined;
+      case 'restaurant':
+      case 'food & catering':
+        return Icons.restaurant_outlined;
+      case 'accommodation':
+        return Icons.hotel_outlined;
+      case 'activity':
+      case 'guide & tour':
+        return Icons.terrain_outlined;
+      default:
+        return Icons.category_outlined;
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _acceptOffer(_RequestItem item) async {
+    await _updateOfferStatus(item, 'accepted');
+  }
+
+  Future<void> _rejectOffer(_RequestItem item) async {
+    final feedback = await showDialog<String>(
+      context: context,
+      builder: (context) => _RejectOfferDialog(providerName: item.provider),
+    );
+    if (feedback == null || !mounted) return;
+    await _updateOfferStatus(item, 'rejected', feedback: feedback);
+  }
+
+  Future<void> _updateOfferStatus(
+    _RequestItem item,
+    String status, {
+    String? feedback,
+  }) async {
+    final offerId = item.offerId;
+    if (offerId == null || offerId.isEmpty) {
+      _showMessage('No offer available for this request.');
+      return;
+    }
+    if (_updatingOfferIds.contains(offerId)) return;
+
+    setState(() => _updatingOfferIds.add(offerId));
+
+    try {
+      await _offerRepository.updateOfferStatus(
+        offerId: offerId,
+        status: status,
+        feedback: feedback,
+      );
+      if (!mounted) return;
+      _showMessage(
+        status == 'accepted'
+            ? 'Offer accepted successfully.'
+            : 'Offer rejected successfully.',
+      );
+      await _loadRequests();
+    } on TripException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Failed to update offer. Please try again.');
+    } finally {
+      if (mounted) setState(() => _updatingOfferIds.remove(offerId));
+    }
+  }
 
   void _onNavSelected(int index) {
     if (index == _navIndex) return;
@@ -98,17 +251,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
     );
   }
 
-  List<_RequestItem> get _filteredRequests {
-    if (_activeFilter == 0) return _requests;
-    final status = switch (_activeFilter) {
-      1 => _RequestStatus.pending,
-      2 => _RequestStatus.accepted,
-      3 => _RequestStatus.rejected,
-      4 => _RequestStatus.completed,
-      _ => null,
-    };
-    return _requests.where((r) => r.status == status).toList();
-  }
+  List<_RequestItem> get _filteredRequests => _requests;
 
   @override
   Widget build(BuildContext context) {
@@ -135,15 +278,43 @@ class _RequestsScreenState extends State<RequestsScreen> {
                     _FilterTabBar(
                       filters: _filters,
                       activeIndex: _activeFilter,
-                      onTap: (i) => setState(() => _activeFilter = i),
+                      onTap: (i) {
+                        if (i == _activeFilter) return;
+                        setState(() => _activeFilter = i);
+                        _loadRequests();
+                      },
                     ),
                     const SizedBox(height: 20),
-                    ..._filteredRequests.map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: _RequestCard(item: item),
+                    if (_isLoading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 48),
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: _ReqDesign.primary,
+                          ),
+                        ),
+                      )
+                    else if (_filteredRequests.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Text(
+                          'No requests found.',
+                          style: _ReqDesign.subtitle,
+                        ),
+                      )
+                    else
+                      ..._filteredRequests.map(
+                        (item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: _RequestCard(
+                            item: item,
+                            isUpdating: item.offerId != null &&
+                                _updatingOfferIds.contains(item.offerId),
+                            onAccept: () => _acceptOffer(item),
+                            onReject: () => _rejectOffer(item),
+                          ),
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 8),
                   ],
                 ),
@@ -312,6 +483,7 @@ enum _RequestStatus { pending, accepted, completed, rejected }
 
 class _RequestItem {
   const _RequestItem({
+    required this.requestId,
     required this.title,
     required this.status,
     required this.provider,
@@ -319,9 +491,12 @@ class _RequestItem {
     required this.serviceDate,
     required this.providerIcon,
     required this.typeIcon,
+    this.offerId,
     this.errorMessage,
   });
 
+  final String requestId;
+  final String? offerId;
   final String title;
   final _RequestStatus status;
   final String provider;
@@ -450,9 +625,17 @@ class _FilterTabBar extends StatelessWidget {
 }
 
 class _RequestCard extends StatelessWidget {
-  const _RequestCard({required this.item});
+  const _RequestCard({
+    required this.item,
+    required this.onAccept,
+    required this.onReject,
+    required this.isUpdating,
+  });
 
   final _RequestItem item;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+  final bool isUpdating;
 
   bool get _isMuted => item.status == _RequestStatus.completed;
 
@@ -535,7 +718,7 @@ class _RequestCard extends StatelessWidget {
                     child: SizedBox(
                       height: 42,
                       child: ElevatedButton(
-                        onPressed: () {},
+                        onPressed: isUpdating ? null : onAccept,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _ReqDesign.primary,
                           foregroundColor: Colors.white,
@@ -545,7 +728,16 @@ class _RequestCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        child: Text('Accept', style: _ReqDesign.acceptLabel),
+                        child: isUpdating
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text('Accept', style: _ReqDesign.acceptLabel),
                       ),
                     ),
                   ),
@@ -555,7 +747,7 @@ class _RequestCard extends StatelessWidget {
                     child: SizedBox(
                       height: 42,
                       child: OutlinedButton(
-                        onPressed: () {},
+                        onPressed: isUpdating ? null : onReject,
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: _ReqDesign.border),
                           shape: RoundedRectangleBorder(
@@ -822,5 +1014,49 @@ class _NavIcon extends StatelessWidget {
     }
 
     return SizedBox(height: 34, child: Center(child: iconWidget));
+  }
+}
+
+class _RejectOfferDialog extends StatefulWidget {
+  const _RejectOfferDialog({required this.providerName});
+
+  final String providerName;
+
+  @override
+  State<_RejectOfferDialog> createState() => _RejectOfferDialogState();
+}
+
+class _RejectOfferDialogState extends State<_RejectOfferDialog> {
+  final _feedbackController = TextEditingController();
+
+  @override
+  void dispose() {
+    _feedbackController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Reject offer from ${widget.providerName}?'),
+      content: TextField(
+        controller: _feedbackController,
+        maxLines: 3,
+        decoration: const InputDecoration(
+          hintText: 'Optional feedback for the provider',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_feedbackController.text),
+          child: const Text('Reject'),
+        ),
+      ],
+    );
   }
 }

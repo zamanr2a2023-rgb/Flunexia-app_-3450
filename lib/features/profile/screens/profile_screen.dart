@@ -1,5 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flunexia_app/features/profile/data/profile_repository.dart';
+import 'package:flunexia_app/features/auth/data/models/user_model.dart';
 import 'package:flunexia_app/features/auth/screens/login_screen.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
@@ -16,13 +21,19 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _nameController = TextEditingController(text: 'Marc Dupont');
-  final _emailController =
-      TextEditingController(text: 'm.dupont@flunexia.app');
+  final _profileRepository = ProfileRepository();
+  final _imagePicker = ImagePicker();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _otherOrgTypeController = TextEditingController();
 
   int _navIndex = 4;
   int _orgType = 0;
+  bool _isLoading = true;
+  bool _isSaving = false;
+  String _displayName = '';
+  String _displayRole = 'Organizer';
+  Uint8List? _profileImageBytes;
 
   static const _otherOrgTypeIndex = 5;
 
@@ -34,6 +45,171 @@ class _ProfileScreenState extends State<ProfileScreen> {
     (icon: Icons.person_outline, label: 'Individual'),
     (icon: Icons.more_horiz, label: 'Other'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final user = await _profileRepository.fetchProfile();
+      if (!mounted) return;
+      _applyUser(user);
+      setState(() => _isLoading = false);
+    } on ProfileException catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showMessage('Failed to load profile. Please try again.');
+    }
+  }
+
+  void _applyUser(UserModel user) {
+    _nameController.text = user.name;
+    _emailController.text = user.email;
+    _displayName = user.name;
+    _displayRole = _formatRole(user.role);
+    _applyOrganizationType(user.organizationType);
+  }
+
+  void _applyOrganizationType(String? organizationType) {
+    if (organizationType == null || organizationType.trim().isEmpty) {
+      setState(() => _orgType = 0);
+      return;
+    }
+
+    final value = organizationType.trim();
+    final index = _orgTypes.indexWhere(
+      (type) => type.label.toLowerCase() == value.toLowerCase(),
+    );
+
+    if (index != -1) {
+      _orgType = index;
+      _otherOrgTypeController.clear();
+    } else {
+      _orgType = _otherOrgTypeIndex;
+      _otherOrgTypeController.text = value;
+    }
+  }
+
+  String _formatRole(String role) {
+    if (role.isEmpty) return 'Organizer';
+    return role[0].toUpperCase() + role.substring(1);
+  }
+
+  String _organizationTypeValue() {
+    if (_orgType == _otherOrgTypeIndex) {
+      return _otherOrgTypeController.text.trim();
+    }
+    return _orgTypes[_orgType].label;
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _showImageSourceSheet() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_library_outlined),
+                  title: const Text('Choose from Gallery'),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt_outlined),
+                  title: const Text('Take a Photo'),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (source != null) {
+      await _pickProfileImage(source);
+    }
+  }
+
+  Future<void> _pickProfileImage(ImageSource source) async {
+    try {
+      final image = await _imagePicker.pickImage(
+        source: source,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+
+      setState(() => _profileImageBytes = bytes);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Could not select image. Please try again.');
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    if (_isSaving) return;
+
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      _showMessage('Full name is required.');
+      return;
+    }
+
+    final organizationType = _organizationTypeValue();
+    if (_orgType == _otherOrgTypeIndex && organizationType.isEmpty) {
+      _showMessage('Please specify your organization type.');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final user = await _profileRepository.updateProfile(
+        name: name,
+        organizationType: organizationType,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _applyUser(user);
+        _isSaving = false;
+      });
+      _showMessage('Profile updated successfully.');
+    } on ProfileException catch (error) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _showMessage('Failed to save profile. Please try again.');
+    }
+  }
 
   @override
   void dispose() {
@@ -89,13 +265,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
         bottom: false,
         child: Column(
           children: [
-            const _ProfileTopBar(),
+            _ProfileTopBar(imageBytes: _profileImageBytes),
             Expanded(
-              child: SingleChildScrollView(
+              child: _isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: _ProfDesign.primary,
+                      ),
+                    )
+                  : SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
                 child: Column(
                   children: [
-                    const _ProfileAvatarSection(),
+                    _ProfileAvatarSection(
+                      name: _displayName,
+                      role: _displayRole,
+                      imageBytes: _profileImageBytes,
+                      onEditTap: _showImageSourceSheet,
+                    ),
                     const SizedBox(height: 28),
                     Align(
                       alignment: Alignment.centerLeft,
@@ -113,6 +300,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     _ProfileTextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      readOnly: true,
                     ),
                     const SizedBox(height: 24),
                     Align(
@@ -157,7 +345,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
-                        onPressed: () {},
+                        onPressed: _isSaving ? null : _saveProfile,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _ProfDesign.primary,
                           foregroundColor: Colors.white,
@@ -165,10 +353,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           shadowColor: Colors.transparent,
                           shape: const StadiumBorder(),
                         ),
-                        child: Text(
-                          'Save Changes',
-                          style: _ProfDesign.saveLabel,
-                        ),
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                'Save Changes',
+                                style: _ProfDesign.saveLabel,
+                              ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -285,7 +482,9 @@ class _ProfDesign {
 }
 
 class _ProfileTopBar extends StatelessWidget {
-  const _ProfileTopBar();
+  const _ProfileTopBar({this.imageBytes});
+
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -295,12 +494,9 @@ class _ProfileTopBar extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
           child: Row(
             children: [
-              const CircleAvatar(
-                radius: 16,
-                backgroundColor: Color(0xFFE4E7EC),
-                backgroundImage: NetworkImage(
-                  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&q=80',
-                ),
+              _ProfileAvatarImage(
+                size: 32,
+                imageBytes: imageBytes,
               ),
               const SizedBox(width: 12),
               Text('Profile', style: _ProfDesign.appBarTitle),
@@ -323,7 +519,17 @@ class _ProfileTopBar extends StatelessWidget {
 }
 
 class _ProfileAvatarSection extends StatelessWidget {
-  const _ProfileAvatarSection();
+  const _ProfileAvatarSection({
+    required this.name,
+    required this.role,
+    required this.onEditTap,
+    this.imageBytes,
+  });
+
+  final String name;
+  final String role;
+  final VoidCallback onEditTap;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -332,38 +538,34 @@ class _ProfileAvatarSection extends StatelessWidget {
         Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
-              width: 112,
-              height: 112,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFFB8C5CE),
-                border: Border.all(color: Colors.white, width: 4),
-                image: const DecorationImage(
-                  image: NetworkImage(
-                    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&q=80',
-                  ),
-                  fit: BoxFit.cover,
-                ),
-              ),
+            _ProfileAvatarImage(
+              size: 112,
+              imageBytes: imageBytes,
+              borderWidth: 4,
             ),
             Positioned(
               right: 0,
               bottom: 0,
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: const BoxDecoration(
-                  color: _ProfDesign.primary,
-                  shape: BoxShape.circle,
+              child: GestureDetector(
+                onTap: onEditTap,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: _ProfDesign.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.edit, size: 16, color: Colors.white),
                 ),
-                child: const Icon(Icons.edit, size: 16, color: Colors.white),
               ),
             ),
           ],
         ),
         const SizedBox(height: 16),
-        Text('Marc Dupont', style: _ProfDesign.userName),
+        Text(
+          name.isNotEmpty ? name : 'Profile',
+          style: _ProfDesign.userName,
+        ),
         const SizedBox(height: 10),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -376,11 +578,51 @@ class _ProfileAvatarSection extends StatelessWidget {
             children: [
               Icon(Icons.verified, size: 14, color: _ProfDesign.badgeText),
               const SizedBox(width: 6),
-              Text('Organizer', style: _ProfDesign.badgeLabel),
+              Text(role, style: _ProfDesign.badgeLabel),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ProfileAvatarImage extends StatelessWidget {
+  const _ProfileAvatarImage({
+    required this.size,
+    this.imageBytes,
+    this.borderWidth = 0,
+  });
+
+  final double size;
+  final Uint8List? imageBytes;
+  final double borderWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFFE4E7EC),
+        border: borderWidth > 0
+            ? Border.all(color: Colors.white, width: borderWidth)
+            : null,
+        image: imageBytes != null
+            ? DecorationImage(
+                image: MemoryImage(imageBytes!),
+                fit: BoxFit.cover,
+              )
+            : null,
+      ),
+      child: imageBytes == null
+          ? Icon(
+              Icons.person_outline,
+              size: size * 0.45,
+              color: _ProfDesign.textGrey,
+            )
+          : null,
     );
   }
 }
@@ -390,18 +632,23 @@ class _ProfileTextField extends StatelessWidget {
     required this.controller,
     this.keyboardType,
     this.hintText,
+    this.readOnly = false,
   });
 
   final TextEditingController controller;
   final TextInputType? keyboardType;
   final String? hintText;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      style: _ProfDesign.inputText,
+      readOnly: readOnly,
+      style: _ProfDesign.inputText.copyWith(
+        color: readOnly ? _ProfDesign.textGrey : _ProfDesign.textDark,
+      ),
       cursorColor: _ProfDesign.primary,
       decoration: InputDecoration(
         hintText: hintText,

@@ -27,7 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Flunexia needs access to your photo library to add trip cover images.</string>
+	<string>Flunexia needs access to your photo library to update your profile picture.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Flunexia needs access to your camera to take a profile picture.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

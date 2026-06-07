@@ -27,6 +27,11 @@ class CreatedTripModel {
     required this.status,
     this.image,
     this.startDate,
+    this.endDate,
+    this.description,
+    this.participants,
+    this.budgetEstimate,
+    this.budgetCurrency,
   });
 
   final String id;
@@ -35,6 +40,11 @@ class CreatedTripModel {
   final String status;
   final String? image;
   final String? startDate;
+  final String? endDate;
+  final String? description;
+  final int? participants;
+  final num? budgetEstimate;
+  final String? budgetCurrency;
 
   factory CreatedTripModel.fromJson(Map<String, dynamic> json) {
     return CreatedTripModel(
@@ -44,6 +54,24 @@ class CreatedTripModel {
       status: json['status']?.toString() ?? '',
       image: json['image'] as String?,
       startDate: json['startDate'] as String?,
+      endDate: json['endDate'] as String?,
+      description: json['description']?.toString(),
+      participants: _readInt(json['participants']),
+      budgetEstimate: _readNum(json['budgetEstimate']),
+      budgetCurrency: json['budgetCurrency']?.toString(),
     );
+  }
+
+  static int? _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  static num? _readNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value);
+    return null;
   }
 }

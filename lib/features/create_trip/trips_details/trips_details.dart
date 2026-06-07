@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flunexia_app/features/create_trip/data/models/create_trip_response_model.dart';
+import 'package:flunexia_app/features/create_trip/data/models/offer_model.dart';
+import 'package:flunexia_app/features/create_trip/data/offer_repository.dart';
+import 'package:flunexia_app/features/create_trip/data/trip_repository.dart';
 import 'package:flunexia_app/features/organizer Dashboard/screens/organizer_dashboard.dart';
 import 'package:flunexia_app/features/create_trip/screens/create_trip.dart';
 import 'package:flunexia_app/features/create_trip/screens/my_trips.dart';
@@ -7,46 +11,233 @@ import 'package:flunexia_app/features/requests/screens/requests_screen.dart';
 import 'package:flunexia_app/features/profile/screens/profile_screen.dart';
 
 class TripDetailsScreen extends StatefulWidget {
-  const TripDetailsScreen({super.key});
+  const TripDetailsScreen({
+    super.key,
+    required this.tripId,
+  });
 
   static const String routeName = '/trip-details';
+
+  final String tripId;
 
   @override
   State<TripDetailsScreen> createState() => _TripDetailsScreenState();
 }
 
 class _TripDetailsScreenState extends State<TripDetailsScreen> {
+  final _tripRepository = TripRepository();
+  final _offerRepository = OfferRepository();
   int _navIndex = 2;
+  bool _isDuplicating = false;
+  bool _isLoading = true;
+  bool _isLoadingOffers = false;
+  CreatedTripModel? _trip;
+  String? _loadError;
+  List<OfferModel> _offers = const [];
+  final Set<String> _updatingOfferIds = {};
 
-  static const _providers = [
-    _ProviderResponse(
-      name: 'Peak Guides Int.',
-      service: 'Mountain Guide Service',
-      price: '\$1,250',
-      tag: _ProviderTag.recommended,
-      status: _ProviderStatus.pending,
-      avatarUrl:
-          'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&q=80',
-    ),
-    _ProviderResponse(
-      name: 'Alpine Routes',
-      service: 'Full Package Agency',
-      price: '\$1,480',
-      tag: _ProviderTag.standard,
-      status: _ProviderStatus.pending,
-      avatarUrl:
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&q=80',
-    ),
-    _ProviderResponse(
-      name: 'Summit Solo',
-      service: 'Private Coaching',
-      price: '\$950',
-      tag: _ProviderTag.rejected,
-      status: _ProviderStatus.rejected,
-      avatarUrl:
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&q=80',
-    ),
-  ];
+  static const _fallbackImage =
+      'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1000&q=80';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTripDetails();
+  }
+
+  Future<void> _loadTripDetails() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+
+    try {
+      final response = await _tripRepository.fetchTripById(widget.tripId);
+      if (!mounted) return;
+      setState(() {
+        _trip = response.trip;
+        _isLoading = false;
+      });
+      await _loadOffers();
+    } on TripException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.message;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Failed to load trip details. Please try again.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadOffers() async {
+    setState(() => _isLoadingOffers = true);
+
+    try {
+      final offers = await _offerRepository.fetchOffersForTrip(widget.tripId);
+      if (!mounted) return;
+      setState(() {
+        _offers = offers;
+        _isLoadingOffers = false;
+      });
+    } on TripException catch (error) {
+      if (!mounted) return;
+      setState(() => _isLoadingOffers = false);
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingOffers = false);
+    }
+  }
+
+  String _formatOfferPrice(OfferModel offer) {
+    final symbol = switch (offer.currency.toUpperCase()) {
+      'EUR' => '€',
+      'USD' => '\$',
+      'GBP' => '£',
+      _ => '${offer.currency} ',
+    };
+    final amount = offer.price;
+    final formatted = amount == amount.roundToDouble()
+        ? amount.toInt().toString()
+        : amount.toString();
+    return '$symbol$formatted';
+  }
+
+  _ProviderTag _tagFromOffer(OfferModel offer) {
+    if (offer.isRejected) return _ProviderTag.rejected;
+    switch (offer.tier.toLowerCase()) {
+      case 'recommended':
+        return _ProviderTag.recommended;
+      default:
+        return _ProviderTag.standard;
+    }
+  }
+
+  int get _pendingOfferCount =>
+      _offers.where((offer) => offer.isPending).length;
+
+  Future<void> _acceptOffer(OfferModel offer) async {
+    await _updateOfferStatus(offer.id, 'accepted');
+  }
+
+  Future<void> _rejectOffer(OfferModel offer) async {
+    final feedback = await showDialog<String>(
+      context: context,
+      builder: (context) => _RejectOfferDialog(
+        providerName: offer.provider.name,
+      ),
+    );
+    if (feedback == null || !mounted) return;
+    await _updateOfferStatus(offer.id, 'rejected', feedback: feedback);
+  }
+
+  Future<void> _updateOfferStatus(
+    String offerId,
+    String status, {
+    String? feedback,
+  }) async {
+    if (_updatingOfferIds.contains(offerId)) return;
+
+    setState(() => _updatingOfferIds.add(offerId));
+
+    try {
+      final response = await _offerRepository.updateOfferStatus(
+        offerId: offerId,
+        status: status,
+        feedback: feedback,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        final index = _offers.indexWhere((offer) => offer.id == offerId);
+        if (index != -1) {
+          _offers = List<OfferModel>.from(_offers)
+            ..[index] = response.offer;
+        }
+      });
+
+      final label = status == 'accepted' ? 'accepted' : 'rejected';
+      _showMessage('Offer $label successfully.');
+    } on TripException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Failed to update offer. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _updatingOfferIds.remove(offerId));
+      }
+    }
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null || isoDate.isEmpty) return '—';
+    try {
+      final date = DateTime.parse(isoDate);
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    } catch (_) {
+      return isoDate;
+    }
+  }
+
+  String _formatDateRange(CreatedTripModel trip) {
+    final start = _formatDate(trip.startDate);
+    final end = _formatDate(trip.endDate);
+    if (trip.endDate == null ||
+        trip.endDate!.isEmpty ||
+        trip.endDate == trip.startDate) {
+      return start;
+    }
+    return '$start - $end';
+  }
+
+  String _formatBudget(CreatedTripModel trip) {
+    if (trip.budgetEstimate == null) return '—';
+    final symbol = switch (trip.budgetCurrency?.toUpperCase()) {
+      'EUR' => '€',
+      'USD' => '\$',
+      'GBP' => '£',
+      _ => '${trip.budgetCurrency ?? ''} ',
+    };
+    final amount = trip.budgetEstimate!;
+    final formatted = amount == amount.roundToDouble()
+        ? amount.toInt().toString()
+        : amount.toString();
+    return '$symbol$formatted';
+  }
+
+  String _formatParticipants(CreatedTripModel trip) {
+    if (trip.participants == null) return '—';
+    final count = trip.participants!;
+    return '$count ${count == 1 ? 'Person' : 'People'}';
+  }
+
+  String _statusLabel(String status) {
+    switch (status.toLowerCase()) {
+      case 'published':
+      case 'active':
+        return 'Active';
+      case 'draft':
+        return 'Draft';
+      case 'pending':
+        return 'Pending';
+      case 'completed':
+        return 'Completed';
+      default:
+        if (status.isEmpty) return 'Active';
+        return status[0].toUpperCase() + status.substring(1);
+    }
+  }
 
   void _onNavSelected(int index) {
     if (index == _navIndex) return;
@@ -83,6 +274,38 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
     );
   }
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _duplicateTrip() async {
+    if (_isDuplicating) return;
+
+    setState(() => _isDuplicating = true);
+
+    try {
+      final response = await _tripRepository.duplicateTrip(widget.tripId);
+      if (!mounted) return;
+
+      _showMessage('Trip "${response.trip.title}" duplicated successfully.');
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => TripDetailsScreen(tripId: response.trip.id),
+        ),
+      );
+    } on TripException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('Failed to duplicate trip. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isDuplicating = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,99 +314,161 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
         bottom: false,
         child: Column(
           children: [
-            const _TripDetailsTopBar(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _HeroImage(),
-                    const SizedBox(height: 18),
-                    Text('Alpine Expedition 2024',
-                        style: _TDDesign.heading),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.calendar_today_outlined,
-                            size: 14, color: _TDDesign.textGrey),
-                        const SizedBox(width: 6),
-                        Text('Aug 12 - Aug 18', style: _TDDesign.metaText),
-                        const SizedBox(width: 14),
-                        const Icon(Icons.location_on_outlined,
-                            size: 14, color: _TDDesign.textGrey),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Zermatt, Switzerland',
-                            style: _TDDesign.metaText,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: const [
-                        Expanded(
-                          child: _StatTile(
-                            icon: Icons.groups_outlined,
-                            label: 'Participants',
-                            value: '12 People',
-                          ),
-                        ),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: _StatTile(
-                            icon: Icons.account_balance_wallet_outlined,
-                            label: 'Total Budget',
-                            value: '\$4,200',
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 22),
-                    Text('Description', style: _TDDesign.sectionTitle),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Experience the majestic beauty of the Alps with our '
-                      'curated summer expedition. This trip includes guided '
-                      'glacier hiking, local cheese tasting in mountain huts, '
-                      'and premium accommodation at the base of the Matterhorn. '
-                      'Designed for intermediate hikers looking for a blend of '
-                      'challenge and comfort.',
-                      style: _TDDesign.body,
-                    ),
-                    const SizedBox(height: 22),
-                    const _RecommendedProvidersCard(),
-                    const SizedBox(height: 22),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Text('Provider Responses',
-                            style: _TDDesign.sectionTitle),
-                        const Spacer(),
-                        const _NewBadge(count: 3),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    ..._providers.map(
-                      (p) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _ProviderCard(provider: p),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-              ),
+            _TripDetailsTopBar(
+              onDuplicate: _duplicateTrip,
+              isDuplicating: _isDuplicating,
             ),
+            Expanded(child: _buildBody()),
             _TDBottomNav(
               selectedIndex: _navIndex,
               onSelected: _onNavSelected,
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: _TDDesign.primary),
+      );
+    }
+
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: _TDDesign.body,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _loadTripDetails,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _TDDesign.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final trip = _trip!;
+    final imageUrl = (trip.image != null && trip.image!.isNotEmpty)
+        ? trip.image!
+        : _fallbackImage;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _HeroImage(
+            imageUrl: imageUrl,
+            statusLabel: _statusLabel(trip.status),
+          ),
+          const SizedBox(height: 18),
+          Text(trip.title, style: _TDDesign.heading),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_outlined,
+                  size: 14, color: _TDDesign.textGrey),
+              const SizedBox(width: 6),
+              Text(_formatDateRange(trip), style: _TDDesign.metaText),
+              const SizedBox(width: 14),
+              const Icon(Icons.location_on_outlined,
+                  size: 14, color: _TDDesign.textGrey),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  trip.location.isNotEmpty ? trip.location : '—',
+                  style: _TDDesign.metaText,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _StatTile(
+                  icon: Icons.groups_outlined,
+                  label: 'Participants',
+                  value: _formatParticipants(trip),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _StatTile(
+                  icon: Icons.account_balance_wallet_outlined,
+                  label: 'Total Budget',
+                  value: _formatBudget(trip),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          Text('Description', style: _TDDesign.sectionTitle),
+          const SizedBox(height: 8),
+          Text(
+            (trip.description != null && trip.description!.isNotEmpty)
+                ? trip.description!
+                : 'No description provided.',
+            style: _TDDesign.body,
+          ),
+          const SizedBox(height: 22),
+          const _RecommendedProvidersCard(),
+          const SizedBox(height: 22),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text('Provider Responses', style: _TDDesign.sectionTitle),
+              const Spacer(),
+              if (_pendingOfferCount > 0)
+                _NewBadge(count: _pendingOfferCount),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (_isLoadingOffers)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: CircularProgressIndicator(color: _TDDesign.primary),
+              ),
+            )
+          else if (_offers.isEmpty)
+            Text(
+              'No provider responses yet.',
+              style: _TDDesign.body,
+            )
+          else
+            ..._offers.map(
+              (offer) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _ProviderCard(
+                  offer: offer,
+                  priceLabel: _formatOfferPrice(offer),
+                  tag: _tagFromOffer(offer),
+                  isUpdating: _updatingOfferIds.contains(offer.id),
+                  onAccept: () => _acceptOffer(offer),
+                  onReject: () => _rejectOffer(offer),
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
       ),
     );
   }
@@ -363,7 +648,13 @@ class _TDDesign {
 }
 
 class _TripDetailsTopBar extends StatelessWidget {
-  const _TripDetailsTopBar();
+  const _TripDetailsTopBar({
+    required this.onDuplicate,
+    required this.isDuplicating,
+  });
+
+  final VoidCallback onDuplicate;
+  final bool isDuplicating;
 
   @override
   Widget build(BuildContext context) {
@@ -385,6 +676,22 @@ class _TripDetailsTopBar extends StatelessWidget {
               ),
               Text('Trip Details', style: _TDDesign.appBarTitle),
               const Spacer(),
+              IconButton(
+                onPressed: isDuplicating ? null : onDuplicate,
+                icon: isDuplicating
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _TDDesign.primary,
+                        ),
+                      )
+                    : const Icon(Icons.content_copy_outlined),
+                color: _TDDesign.primary,
+                iconSize: 20,
+                tooltip: 'Duplicate trip',
+              ),
               IconButton(
                 onPressed: () {},
                 icon: const Icon(Icons.notifications_outlined),
@@ -419,7 +726,13 @@ class _TripDetailsTopBar extends StatelessWidget {
 }
 
 class _HeroImage extends StatelessWidget {
-  const _HeroImage();
+  const _HeroImage({
+    required this.imageUrl,
+    required this.statusLabel,
+  });
+
+  final String imageUrl;
+  final String statusLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -430,7 +743,7 @@ class _HeroImage extends StatelessWidget {
           AspectRatio(
             aspectRatio: 16 / 9,
             child: Image.network(
-              'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1000&q=80',
+              imageUrl,
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) => Container(
                 color: const Color(0xFFD0D5DD),
@@ -450,7 +763,7 @@ class _HeroImage extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                'Active',
+                statusLabel,
                 style: GoogleFonts.inter(
                   color: Colors.white,
                   fontSize: 12,
@@ -640,30 +953,37 @@ class _NewBadge extends StatelessWidget {
 
 enum _ProviderTag { recommended, standard, rejected }
 
-enum _ProviderStatus { pending, rejected }
-
-class _ProviderResponse {
-  const _ProviderResponse({
-    required this.name,
-    required this.service,
-    required this.price,
+class _ProviderCard extends StatelessWidget {
+  const _ProviderCard({
+    required this.offer,
+    required this.priceLabel,
     required this.tag,
-    required this.status,
-    required this.avatarUrl,
+    required this.isUpdating,
+    required this.onAccept,
+    required this.onReject,
   });
 
-  final String name;
-  final String service;
-  final String price;
+  final OfferModel offer;
+  final String priceLabel;
   final _ProviderTag tag;
-  final _ProviderStatus status;
-  final String avatarUrl;
-}
+  final bool isUpdating;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
 
-class _ProviderCard extends StatelessWidget {
-  const _ProviderCard({required this.provider});
+  String get _serviceLabel {
+    if (offer.description.isNotEmpty) return offer.description;
+    return offer.provider.providerType ?? 'Provider service';
+  }
 
-  final _ProviderResponse provider;
+  String get _initials {
+    final name = offer.provider.name.trim();
+    if (name.isEmpty) return 'P';
+    final parts = name.split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -690,30 +1010,37 @@ class _ProviderCard extends StatelessWidget {
               CircleAvatar(
                 radius: 18,
                 backgroundColor: const Color(0xFFE4E7EC),
-                backgroundImage: NetworkImage(provider.avatarUrl),
+                child: Text(
+                  _initials,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: _TDDesign.textDark,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(provider.name, style: _TDDesign.providerName),
+                    Text(offer.provider.name, style: _TDDesign.providerName),
                     const SizedBox(height: 2),
-                    Text(provider.service, style: _TDDesign.providerService),
+                    Text(_serviceLabel, style: _TDDesign.providerService),
                   ],
                 ),
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(provider.price, style: _TDDesign.providerPrice),
+                  Text(priceLabel, style: _TDDesign.providerPrice),
                   const SizedBox(height: 6),
-                  _ProviderTagChip(tag: provider.tag),
+                  _ProviderTagChip(tag: tag),
                 ],
               ),
             ],
           ),
-          if (provider.status == _ProviderStatus.pending) ...[
+          if (offer.isPending) ...[
             const SizedBox(height: 14),
             Row(
               children: [
@@ -721,7 +1048,7 @@ class _ProviderCard extends StatelessWidget {
                   child: SizedBox(
                     height: 40,
                     child: ElevatedButton(
-                      onPressed: () {},
+                      onPressed: isUpdating ? null : onAccept,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _TDDesign.primary,
                         foregroundColor: Colors.white,
@@ -729,8 +1056,16 @@ class _ProviderCard extends StatelessWidget {
                         shadowColor: Colors.transparent,
                         shape: const StadiumBorder(),
                       ),
-                      child: Text('Accept Offer',
-                          style: _TDDesign.acceptLabel),
+                      child: isUpdating
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text('Accept Offer', style: _TDDesign.acceptLabel),
                     ),
                   ),
                 ),
@@ -739,14 +1074,13 @@ class _ProviderCard extends StatelessWidget {
                   child: SizedBox(
                     height: 40,
                     child: OutlinedButton(
-                      onPressed: () {},
+                      onPressed: isUpdating ? null : onReject,
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: _TDDesign.border),
                         shape: const StadiumBorder(),
                         backgroundColor: Colors.white,
                       ),
-                      child: Text('Reject Offer',
-                          style: _TDDesign.rejectLabel),
+                      child: Text('Reject Offer', style: _TDDesign.rejectLabel),
                     ),
                   ),
                 ),
@@ -755,6 +1089,50 @@ class _ProviderCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _RejectOfferDialog extends StatefulWidget {
+  const _RejectOfferDialog({required this.providerName});
+
+  final String providerName;
+
+  @override
+  State<_RejectOfferDialog> createState() => _RejectOfferDialogState();
+}
+
+class _RejectOfferDialogState extends State<_RejectOfferDialog> {
+  final _feedbackController = TextEditingController();
+
+  @override
+  void dispose() {
+    _feedbackController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Reject offer from ${widget.providerName}?'),
+      content: TextField(
+        controller: _feedbackController,
+        maxLines: 3,
+        decoration: const InputDecoration(
+          hintText: 'Optional feedback for the provider',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_feedbackController.text),
+          child: const Text('Reject'),
+        ),
+      ],
     );
   }
 }

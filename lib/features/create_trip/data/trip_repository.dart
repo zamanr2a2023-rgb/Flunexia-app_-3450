@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:flunexia_app/core/constants/api_constants.dart';
 import 'package:flunexia_app/core/services/api_service.dart';
 import 'package:flunexia_app/core/services/storage_service.dart';
@@ -76,10 +77,13 @@ class TripRepository {
 
     http.MultipartFile? imageFile;
     if (request.imageBytes != null && request.imageBytes!.isNotEmpty) {
+      final bytes = request.imageBytes!;
+      final contentType = _resolveImageContentType(bytes, request.imageName);
       imageFile = http.MultipartFile.fromBytes(
         'image',
-        request.imageBytes!,
-        filename: request.imageName ?? 'cover.jpg',
+        bytes,
+        filename: _resolveImageFilename(request.imageName, contentType),
+        contentType: contentType,
       );
     }
 
@@ -97,6 +101,58 @@ class TripRepository {
       );
     }
 
+    return _parseTripResponse(response);
+  }
+
+  Future<CreateTripResponseModel> duplicateTrip(String tripId) async {
+    final token = await _storageService.getToken();
+    if (token == null || token.isEmpty) {
+      throw TripException('You are not logged in. Please sign in again.');
+    }
+    if (tripId.trim().isEmpty) {
+      throw TripException('Trip not found.');
+    }
+
+    http.Response response;
+    try {
+      response = await _apiService.post(
+        ApiConstants.tripDuplicate(tripId.trim()),
+        token: token,
+      );
+    } on http.ClientException {
+      throw TripException(
+        'Unable to connect. Please check your internet connection.',
+      );
+    }
+
+    return _parseTripResponse(response);
+  }
+
+  Future<CreateTripResponseModel> fetchTripById(String tripId) async {
+    final token = await _storageService.getToken();
+    if (token == null || token.isEmpty) {
+      throw TripException('You are not logged in. Please sign in again.');
+    }
+    if (tripId.trim().isEmpty) {
+      throw TripException('Trip not found.');
+    }
+
+    http.Response response;
+    try {
+      response = await _apiService.get(
+        ApiConstants.tripById(tripId.trim()),
+        token: token,
+      );
+    } on http.ClientException {
+      throw TripException(
+        'Unable to connect. Please check your internet connection.',
+      );
+    }
+
+    return _parseTripResponse(response);
+  }
+
+  CreateTripResponseModel _parseTripResponse(http.Response response) {
     if (response.body.trim().isEmpty) {
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw TripException('Session expired. Please sign in again.');
@@ -125,6 +181,31 @@ class TripRepository {
       }
     }
 
+    if (response.statusCode == 200 && data['trip'] is Map<String, dynamic>) {
+      try {
+        return CreateTripResponseModel(
+          success: true,
+          trip: CreatedTripModel.fromJson(
+            data['trip'] as Map<String, dynamic>,
+          ),
+        );
+      } catch (_) {
+        throw TripException('Failed to parse trip response.');
+      }
+    }
+
+    if (response.statusCode == 200 &&
+        (data['_id'] != null || data['id'] != null)) {
+      try {
+        return CreateTripResponseModel(
+          success: true,
+          trip: CreatedTripModel.fromJson(data),
+        );
+      } catch (_) {
+        throw TripException('Failed to parse trip response.');
+      }
+    }
+
     throw TripException(_extractErrorMessage(data, response.statusCode));
   }
 
@@ -144,5 +225,59 @@ class TripRepository {
     }
 
     return 'Failed to create trip. Please try again.';
+  }
+
+  MediaType _resolveImageContentType(List<int> bytes, String? filename) {
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return MediaType('image', 'png');
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF) {
+      return MediaType('image', 'jpeg');
+    }
+    if (bytes.length >= 6 &&
+        bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46) {
+      return MediaType('image', 'gif');
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46) {
+      return MediaType('image', 'webp');
+    }
+
+    final name = filename?.toLowerCase() ?? '';
+    if (name.endsWith('.png')) return MediaType('image', 'png');
+    if (name.endsWith('.jpg') || name.endsWith('.jpeg')) {
+      return MediaType('image', 'jpeg');
+    }
+    if (name.endsWith('.gif')) return MediaType('image', 'gif');
+    if (name.endsWith('.webp')) return MediaType('image', 'webp');
+
+    return MediaType('image', 'jpeg');
+  }
+
+  String _resolveImageFilename(String? name, MediaType contentType) {
+    final base = (name != null && name.isNotEmpty) ? name : 'cover';
+    final lower = base.toLowerCase();
+    if (lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp')) {
+      return base;
+    }
+
+    final ext = contentType.subtype == 'jpeg' ? 'jpg' : contentType.subtype;
+    return '$base.$ext';
   }
 }
